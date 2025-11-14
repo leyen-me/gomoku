@@ -13,6 +13,8 @@ export default function GameInfo({
   lastLoser,
   onChooseColor,
   waitingForColorChoice,
+  spectators = [],
+  isSpectator = false,
 }) {
   const getPlayerName = (color) => {
     const player = players?.find(p => p.color === color);
@@ -79,7 +81,22 @@ export default function GameInfo({
           </div>
         </div>
 
-        {status === 'playing' && (
+        {spectators.length > 0 && (
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              观战者 ({spectators.length})
+            </p>
+            <div className="space-y-1">
+              {spectators.map((spectator) => (
+                <p key={spectator.id} className="text-xs text-gray-600 dark:text-gray-400">
+                  {spectator.name}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {status === 'playing' && !isSpectator && (
           <div className="pt-4 space-y-3">
             {canUndo && (
               <button
@@ -98,7 +115,7 @@ export default function GameInfo({
           </div>
         )}
 
-        {status === 'finished' && (
+        {status === 'finished' && !isSpectator && (
           <div className="pt-4 space-y-3">
             {waitingForColorChoice && lastLoser === playerColor && (
               <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">

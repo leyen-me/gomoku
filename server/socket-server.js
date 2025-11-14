@@ -8,6 +8,12 @@ const rooms = new Map();
 // 存储对局记录
 const gameRecords = [];
 
+// 存储玩家离线超时定时器
+const playerDisconnectTimers = new Map();
+
+// 离线超时时间（5分钟）
+const DISCONNECT_TIMEOUT = 5 * 60 * 1000;
+
 export default function initializeSocketServer(server) {
   const io = new Server(server, {
     cors: {
@@ -24,7 +30,9 @@ export default function initializeSocketServer(server) {
       const { roomId, playerName, preferredColor } = data;
       const room = {
         id: roomId,
-        players: [{ id: socket.id, name: playerName, color: preferredColor || 'black' }],
+        players: [{ id: socket.id, name: playerName, color: preferredColor || 'black', isOnline: true }],
+        spectators: [],
+        messages: [],
         board: Array(15).fill(null).map(() => Array(15).fill(null)),
         currentPlayer: 'black',
         status: 'waiting',
@@ -58,7 +66,7 @@ export default function initializeSocketServer(server) {
       const otherPlayerColor = room.players[0].color;
       const newPlayerColor = preferredColor || (otherPlayerColor === 'black' ? 'white' : 'black');
       
-      room.players.push({ id: socket.id, name: playerName, color: newPlayerColor });
+      room.players.push({ id: socket.id, name: playerName, color: newPlayerColor, isOnline: true });
       
       // 确保黑方先手
       if (newPlayerColor === 'black') {
@@ -73,15 +81,52 @@ export default function initializeSocketServer(server) {
       io.to(roomId).emit('roomUpdated', room);
     });
 
+    // 以观战者身份加入房间
+    socket.on('joinAsSpectator', (data) => {
+      const { roomId, spectatorName } = data;
+      const room = rooms.get(roomId);
+
+      if (!room) {
+        socket.emit('error', { message: '房间不存在' });
+        return;
+      }
+
+      // 检查是否已经是玩家
+      const isPlayer = room.players.some(p => p.id === socket.id);
+      if (isPlayer) {
+        socket.emit('error', { message: '你已经是玩家了' });
+        return;
+      }
+
+      // 检查是否已经是观战者
+      const existingSpectatorIndex = room.spectators.findIndex(s => s.id === socket.id);
+      if (existingSpectatorIndex !== -1) {
+        // 已存在，更新名称
+        room.spectators[existingSpectatorIndex].name = spectatorName;
+      } else {
+        // 添加新观战者
+        room.spectators.push({ id: socket.id, name: spectatorName });
+      }
+
+      socket.join(roomId);
+      socket.emit('spectatorJoined', {
+        room,
+        spectatorId: socket.id,
+      });
+      io.to(roomId).emit('spectatorJoined', {
+        spectator: { id: socket.id, name: spectatorName },
+        spectatorCount: room.spectators.length,
+      });
+    });
+
     // 获取房间列表
     socket.on('getRooms', () => {
-      const roomList = Array.from(rooms.values())
-        .filter(room => room.players.length < 2)
-        .map(room => ({
-          id: room.id,
-          playerCount: room.players.length,
-          status: room.status,
-        }));
+      const roomList = Array.from(rooms.values()).map(room => ({
+        id: room.id,
+        playerCount: room.players.length,
+        spectatorCount: room.spectators.length,
+        status: room.status,
+      }));
       socket.emit('roomsList', roomList);
     });
 
@@ -369,6 +414,95 @@ export default function initializeSocketServer(server) {
       socket.emit('gameRecords', recentRecords);
     });
 
+    // 重连到房间
+    socket.on('reconnectToRoom', (data) => {
+      const { roomId, playerName } = data;
+      const room = rooms.get(roomId);
+
+      if (!room) {
+        socket.emit('error', { message: '房间不存在' });
+        return;
+      }
+
+      // 查找玩家（通过名称查找，因为socket.id可能已改变）
+      const player = room.players.find(p => p.name === playerName);
+      if (player) {
+        // 清除旧的离线定时器（使用旧的socket.id）
+        const oldTimerKey = `${roomId}-${player.id}`;
+        if (playerDisconnectTimers.has(oldTimerKey)) {
+          clearTimeout(playerDisconnectTimers.get(oldTimerKey));
+          playerDisconnectTimers.delete(oldTimerKey);
+        }
+        
+        // 更新 socket.id（重连后可能改变）
+        player.id = socket.id;
+        player.isOnline = true;
+
+        socket.join(roomId);
+        socket.emit('roomReconnected', room);
+        io.to(roomId).emit('playerReconnected', {
+          playerId: socket.id,
+          playerName: player.name,
+        });
+      } else {
+        // 查找观战者（通过名称查找）
+        const spectator = room.spectators.find(s => s.name === playerName);
+        if (spectator) {
+          spectator.id = socket.id;
+          socket.join(roomId);
+          socket.emit('spectatorReconnected', room);
+        } else {
+          socket.emit('error', { message: '未找到你的记录' });
+        }
+      }
+    });
+
+    // 发送聊天消息
+    socket.on('sendMessage', (data) => {
+      const { roomId, content } = data;
+      const room = rooms.get(roomId);
+
+      if (!room) {
+        socket.emit('error', { message: '房间不存在' });
+        return;
+      }
+
+      // 限制消息长度
+      if (!content || content.trim().length === 0 || content.length > 200) {
+        socket.emit('error', { message: '消息长度无效' });
+        return;
+      }
+
+      // 查找发送者
+      const player = room.players.find(p => p.id === socket.id);
+      const spectator = room.spectators.find(s => s.id === socket.id);
+      
+      if (!player && !spectator) {
+        socket.emit('error', { message: '你不在房间中' });
+        return;
+      }
+
+      const senderName = player ? player.name : spectator.name;
+      const messageType = player ? 'player' : 'spectator';
+
+      const message = {
+        id: Date.now().toString(),
+        senderId: socket.id,
+        senderName,
+        content: content.trim(),
+        timestamp: new Date().toISOString(),
+        type: messageType,
+      };
+
+      room.messages.push(message);
+      // 限制消息历史数量（保留最近100条）
+      if (room.messages.length > 100) {
+        room.messages = room.messages.slice(-100);
+      }
+
+      io.to(roomId).emit('messageReceived', message);
+    });
+
     // 离开房间
     socket.on('leaveRoom', (data) => {
       const { roomId } = data;
@@ -376,21 +510,7 @@ export default function initializeSocketServer(server) {
       
       const room = rooms.get(roomId);
       if (room) {
-        room.players = room.players.filter(p => p.id !== socket.id);
-        if (room.players.length === 0) {
-          rooms.delete(roomId);
-        } else {
-          io.to(roomId).emit('playerLeft', { playerId: socket.id });
-        }
-      }
-    });
-
-    // 断开连接
-    socket.on('disconnect', () => {
-      console.log('用户断开连接:', socket.id);
-      
-      // 清理房间
-      for (const [roomId, room] of rooms.entries()) {
+        // 移除玩家
         const playerIndex = room.players.findIndex(p => p.id === socket.id);
         if (playerIndex !== -1) {
           room.players.splice(playerIndex, 1);
@@ -399,6 +519,70 @@ export default function initializeSocketServer(server) {
           } else {
             io.to(roomId).emit('playerLeft', { playerId: socket.id });
           }
+        } else {
+          // 移除观战者
+          const spectatorIndex = room.spectators.findIndex(s => s.id === socket.id);
+          if (spectatorIndex !== -1) {
+            room.spectators.splice(spectatorIndex, 1);
+            io.to(roomId).emit('spectatorLeft', {
+              spectatorId: socket.id,
+              spectatorCount: room.spectators.length,
+            });
+          }
+        }
+      }
+    });
+
+    // 断开连接
+    socket.on('disconnect', () => {
+      console.log('用户断开连接:', socket.id);
+      
+      // 处理玩家断线
+      for (const [roomId, room] of rooms.entries()) {
+        const player = room.players.find(p => p.id === socket.id);
+        if (player) {
+          // 标记为离线，但不立即移除
+          player.isOnline = false;
+          
+          // 通知房间内其他用户
+          io.to(roomId).emit('playerDisconnected', {
+            playerId: socket.id,
+            playerName: player.name,
+          });
+
+          // 设置超时定时器，超时后移除玩家
+          const timerKey = `${roomId}-${socket.id}`;
+          const timer = setTimeout(() => {
+            const currentRoom = rooms.get(roomId);
+            if (currentRoom) {
+              const offlinePlayer = currentRoom.players.find(p => p.id === socket.id && !p.isOnline);
+              if (offlinePlayer) {
+                const index = currentRoom.players.findIndex(p => p.id === socket.id);
+                if (index !== -1) {
+                  currentRoom.players.splice(index, 1);
+                  if (currentRoom.players.length === 0) {
+                    rooms.delete(roomId);
+                  } else {
+                    io.to(roomId).emit('playerLeft', { playerId: socket.id });
+                  }
+                }
+              }
+            }
+            playerDisconnectTimers.delete(timerKey);
+          }, DISCONNECT_TIMEOUT);
+          
+          playerDisconnectTimers.set(timerKey, timer);
+          break;
+        }
+
+        // 处理观战者离开
+        const spectatorIndex = room.spectators.findIndex(s => s.id === socket.id);
+        if (spectatorIndex !== -1) {
+          room.spectators.splice(spectatorIndex, 1);
+          io.to(roomId).emit('spectatorLeft', {
+            spectatorId: socket.id,
+            spectatorCount: room.spectators.length,
+          });
           break;
         }
       }

@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 
-export default function RoomList({ rooms, onJoinRoom, onRefresh, playerName: initialPlayerName }) {
+export default function RoomList({ rooms, onJoinRoom, onJoinAsSpectator, onRefresh, playerName: initialPlayerName }) {
   const [playerName, setPlayerName] = useState(initialPlayerName || '');
   const [showNameInput, setShowNameInput] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
+  const [isSpectatorMode, setIsSpectatorMode] = useState(false);
 
   // 同步外部传入的 playerName
   useEffect(() => {
@@ -61,28 +62,46 @@ export default function RoomList({ rooms, onJoinRoom, onRefresh, playerName: ini
                 <span className="font-medium text-gray-800 dark:text-gray-200">房间 {room.id}</span>
                 <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
                   ({room.playerCount}/2)
+                  {room.spectatorCount > 0 && (
+                    <span className="ml-1">· {room.spectatorCount} 观战</span>
+                  )}
                 </span>
               </div>
             </div>
-            <button
-              onClick={() => {
-                if (room.playerCount >= 2) return;
-                if (!playerName.trim()) {
-                  setSelectedRoomId(room.id);
-                  setShowNameInput(true);
-                  return;
-                }
-                onJoinRoom(room.id, playerName);
-              }}
-              disabled={room.playerCount >= 2}
-              className={`px-5 py-2 rounded-lg font-medium text-sm transition-colors duration-200 ${
-                room.playerCount >= 2
-                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-not-allowed'
-                  : 'bg-blue-500 hover:bg-blue-600 text-white'
-              }`}
-            >
-              {room.playerCount >= 2 ? '已满' : '加入'}
-            </button>
+            <div className="flex gap-2">
+              {room.playerCount < 2 && (
+                <button
+                  onClick={() => {
+                    if (!playerName.trim()) {
+                      setSelectedRoomId(room.id);
+                      setIsSpectatorMode(false);
+                      setShowNameInput(true);
+                      return;
+                    }
+                    onJoinRoom(room.id, playerName);
+                  }}
+                  className="px-5 py-2 rounded-lg font-medium text-sm transition-colors duration-200 bg-blue-500 hover:bg-blue-600 text-white"
+                >
+                  加入
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (!playerName.trim()) {
+                    setSelectedRoomId(room.id);
+                    setIsSpectatorMode(true);
+                    setShowNameInput(true);
+                    return;
+                  }
+                  if (onJoinAsSpectator) {
+                    onJoinAsSpectator(room.id, playerName);
+                  }
+                }}
+                className="px-5 py-2 rounded-lg font-medium text-sm transition-colors duration-200 bg-gray-500 hover:bg-gray-600 text-white"
+              >
+                观战
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -103,7 +122,11 @@ export default function RoomList({ rooms, onJoinRoom, onRefresh, playerName: ini
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && playerName.trim()) {
-                  onJoinRoom(selectedRoomId, playerName);
+                  if (isSpectatorMode && onJoinAsSpectator) {
+                    onJoinAsSpectator(selectedRoomId, playerName);
+                  } else {
+                    onJoinRoom(selectedRoomId, playerName);
+                  }
                   setShowNameInput(false);
                 }
               }}
@@ -112,14 +135,18 @@ export default function RoomList({ rooms, onJoinRoom, onRefresh, playerName: ini
               <button
                 onClick={() => {
                   if (playerName.trim()) {
-                    onJoinRoom(selectedRoomId, playerName);
+                    if (isSpectatorMode && onJoinAsSpectator) {
+                      onJoinAsSpectator(selectedRoomId, playerName);
+                    } else {
+                      onJoinRoom(selectedRoomId, playerName);
+                    }
                     setShowNameInput(false);
                   }
                 }}
                 disabled={!playerName.trim()}
                 className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200"
               >
-                加入
+                {isSpectatorMode ? '观战' : '加入'}
               </button>
               <button
                 onClick={() => {

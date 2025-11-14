@@ -7,6 +7,7 @@ import GameBoard from '../components/GameBoard';
 import GameInfo from '../components/GameInfo';
 import CreateRoom from '../components/CreateRoom';
 import RoomList from '../components/RoomList';
+import ChatBox from '../components/ChatBox';
 
 export default function Home() {
   const [socket, setSocket] = useState(null);
@@ -27,23 +28,90 @@ export default function Home() {
   const [waitingForColorChoice, setWaitingForColorChoice] = useState(false);
   const [gameRecords, setGameRecords] = useState([]);
   const [showRecords, setShowRecords] = useState(false);
+  const [spectators, setSpectators] = useState([]);
+  const [isSpectator, setIsSpectator] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [connectionStatus, setConnectionStatus] = useState('connected'); // connected, disconnected, reconnecting
 
   useEffect(() => {
     const socketInstance = getSocket();
     setSocket(socketInstance);
+
+    // 保存房间信息到 localStorage 用于重连
+    const saveRoomInfo = () => {
+      if (roomId && playerName) {
+        localStorage.setItem('gomoku_roomInfo', JSON.stringify({
+          roomId,
+          playerName,
+          isSpectator,
+        }));
+      }
+    };
+
+    // 尝试从 localStorage 恢复房间信息
+    const savedRoomInfo = localStorage.getItem('gomoku_roomInfo');
+    if (savedRoomInfo) {
+      try {
+        const { roomId: savedRoomId, playerName: savedPlayerName, isSpectator: savedIsSpectator } = JSON.parse(savedRoomInfo);
+        if (savedRoomId && savedPlayerName) {
+          // 延迟重连，确保 socket 已连接
+          setTimeout(() => {
+            socketInstance.emit('reconnectToRoom', {
+              roomId: savedRoomId,
+              playerName: savedPlayerName,
+            });
+          }, 500);
+        }
+      } catch (e) {
+        console.error('Failed to parse saved room info', e);
+      }
+    }
+
+    // 监听连接状态
+    socketInstance.on('connect', () => {
+      setConnectionStatus('connected');
+      setError(null);
+    });
+
+    socketInstance.on('disconnect', () => {
+      setConnectionStatus('disconnected');
+    });
+
+    socketInstance.on('reconnect', () => {
+      setConnectionStatus('reconnecting');
+      // 尝试重连到房间
+      const savedRoomInfo = localStorage.getItem('gomoku_roomInfo');
+      if (savedRoomInfo) {
+        try {
+          const { roomId: savedRoomId, playerName: savedPlayerName } = JSON.parse(savedRoomInfo);
+          if (savedRoomId && savedPlayerName) {
+            socketInstance.emit('reconnectToRoom', {
+              roomId: savedRoomId,
+              playerName: savedPlayerName,
+            });
+          }
+        } catch (e) {
+          console.error('Failed to reconnect', e);
+        }
+      }
+    });
 
     // 监听房间创建
     socketInstance.on('roomCreated', (room) => {
       setRoomId(room.id);
       setPlayerColor(room.players[0].color);
       setPlayers(room.players);
+      setSpectators(room.spectators || []);
+      setMessages(room.messages || []);
       setBoard(room.board);
       setCurrentPlayer(room.currentPlayer);
       setStatus(room.status);
       setCanUndo(false);
       setLastLoser(null);
       setWaitingForColorChoice(false);
+      setIsSpectator(false);
       setGameState(room.status === 'waiting' ? 'waiting' : 'playing');
+      saveRoomInfo();
     });
 
     // 监听房间加入
@@ -52,18 +120,106 @@ export default function Home() {
       setRoomId(room.id);
       setPlayerColor(myPlayer?.color);
       setPlayers(room.players);
+      setSpectators(room.spectators || []);
+      setMessages(room.messages || []);
       setBoard(room.board);
       setCurrentPlayer(room.currentPlayer);
       setStatus(room.status);
       setCanUndo(false);
       setLastLoser(null);
       setWaitingForColorChoice(false);
+      setIsSpectator(false);
       setGameState('playing');
+      saveRoomInfo();
+    });
+
+    // 监听观战者加入
+    socketInstance.on('spectatorJoined', (data) => {
+      if (data.room) {
+        setRoomId(data.room.id);
+        setPlayers(data.room.players);
+        setSpectators(data.room.spectators || []);
+        setMessages(data.room.messages || []);
+        setBoard(data.room.board);
+        setCurrentPlayer(data.room.currentPlayer);
+        setStatus(data.room.status);
+        setWinner(data.room.winner);
+        setIsSpectator(true);
+        setPlayerColor(null);
+        setGameState(data.room.status === 'finished' ? 'finished' : 'playing');
+        saveRoomInfo();
+      } else {
+        // 其他观战者加入
+        setSpectators(prev => {
+          const exists = prev.find(s => s.id === data.spectator.id);
+          if (exists) return prev;
+          return [...prev, data.spectator];
+        });
+      }
+    });
+
+    // 监听观战者离开
+    socketInstance.on('spectatorLeft', (data) => {
+      setSpectators(prev => prev.filter(s => s.id !== data.spectatorId));
+    });
+
+    // 监听重连成功
+    socketInstance.on('roomReconnected', (room) => {
+      const myPlayer = room.players.find(p => p.id === socketInstance.id);
+      setRoomId(room.id);
+      setPlayerColor(myPlayer?.color);
+      setPlayers(room.players);
+      setSpectators(room.spectators || []);
+      setMessages(room.messages || []);
+      setBoard(room.board);
+      setCurrentPlayer(room.currentPlayer);
+      setStatus(room.status);
+      setCanUndo(room.moveHistory?.length > 0 || false);
+      setLastLoser(room.lastLoser || null);
+      setWaitingForColorChoice(room.waitingForColorChoice || false);
+      setIsSpectator(false);
+      setConnectionStatus('connected');
+      setGameState(room.status === 'waiting' ? 'waiting' : room.status === 'finished' ? 'finished' : 'playing');
+      if (room.status === 'finished') {
+        setWinner(room.winner);
+      }
+      saveRoomInfo();
+    });
+
+    socketInstance.on('spectatorReconnected', (room) => {
+      setRoomId(room.id);
+      setPlayers(room.players);
+      setSpectators(room.spectators || []);
+      setMessages(room.messages || []);
+      setBoard(room.board);
+      setCurrentPlayer(room.currentPlayer);
+      setStatus(room.status);
+      setIsSpectator(true);
+      setPlayerColor(null);
+      setConnectionStatus('connected');
+      setGameState(room.status === 'finished' ? 'finished' : 'playing');
+      if (room.status === 'finished') {
+        setWinner(room.winner);
+      }
+      saveRoomInfo();
+    });
+
+    // 监听玩家断线
+    socketInstance.on('playerDisconnected', (data) => {
+      setError(`${data.playerName} 已断开连接，等待重连...`);
+      setTimeout(() => setError(null), 5000);
+    });
+
+    // 监听玩家重连
+    socketInstance.on('playerReconnected', (data) => {
+      setError(`${data.playerName} 已重新连接`);
+      setTimeout(() => setError(null), 3000);
     });
 
     // 监听房间更新
     socketInstance.on('roomUpdated', (room) => {
       setPlayers(room.players);
+      setSpectators(room.spectators || []);
       setBoard(room.board);
       setCurrentPlayer(room.currentPlayer);
       setStatus(room.status);
@@ -74,6 +230,11 @@ export default function Home() {
         }
         return prevState;
       });
+    });
+
+    // 监听聊天消息
+    socketInstance.on('messageReceived', (message) => {
+      setMessages(prev => [...prev, message]);
     });
 
     // 监听落子
@@ -140,6 +301,7 @@ export default function Home() {
         setPlayerColor(myPlayer.color);
       }
       setPlayers(room.players);
+      setSpectators(room.spectators || []);
     });
 
     // 监听玩家离开
@@ -176,6 +338,16 @@ export default function Home() {
       socketInstance.off('playerLeft');
       socketInstance.off('roomsList');
       socketInstance.off('error');
+      socketInstance.off('connect');
+      socketInstance.off('disconnect');
+      socketInstance.off('reconnect');
+      socketInstance.off('spectatorJoined');
+      socketInstance.off('spectatorLeft');
+      socketInstance.off('roomReconnected');
+      socketInstance.off('spectatorReconnected');
+      socketInstance.off('playerDisconnected');
+      socketInstance.off('playerReconnected');
+      socketInstance.off('messageReceived');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -195,6 +367,22 @@ export default function Home() {
     setPlayerName(nameToUse);
     setError(null);
     socket.emit('joinRoom', { roomId: targetRoomId, playerName: nameToUse });
+  };
+
+  const handleJoinAsSpectator = (targetRoomId, name = null) => {
+    const nameToUse = name || playerName;
+    if (!nameToUse) {
+      setError('请先输入观战者名称');
+      return;
+    }
+    setPlayerName(nameToUse);
+    setError(null);
+    socket.emit('joinAsSpectator', { roomId: targetRoomId, spectatorName: nameToUse });
+  };
+
+  const handleSendMessage = (content) => {
+    if (!socket || !roomId || !content.trim()) return;
+    socket.emit('sendMessage', { roomId, content });
   };
 
   const handleCellClick = (row, col) => {
@@ -244,10 +432,13 @@ export default function Home() {
     if (socket && roomId) {
       socket.emit('leaveRoom', { roomId });
     }
+    localStorage.removeItem('gomoku_roomInfo');
     setGameState('lobby');
     setRoomId(null);
     setBoard(createBoard());
     setPlayers([]);
+    setSpectators([]);
+    setMessages([]);
     setLastMove(null);
     setWinner(null);
     setCurrentPlayer('black');
@@ -255,6 +446,8 @@ export default function Home() {
     setCanUndo(false);
     setLastLoser(null);
     setWaitingForColorChoice(false);
+    setIsSpectator(false);
+    setPlayerColor(null);
     socket.emit('getRooms');
   };
 
@@ -267,13 +460,31 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950 py-12 sm:py-16 px-4 sm:px-6">
       <div className="max-w-7xl mx-auto">
-        {error && (
-          <div className="mb-8 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 text-red-700 dark:text-red-400 px-6 py-4 rounded-lg animate-in fade-in duration-200">
+        {(error || connectionStatus !== 'connected') && (
+          <div className={`mb-8 px-6 py-4 rounded-lg animate-in fade-in duration-200 ${
+            connectionStatus === 'disconnected' 
+              ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 text-red-700 dark:text-red-400'
+              : connectionStatus === 'reconnecting'
+              ? 'bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 text-yellow-700 dark:text-yellow-400'
+              : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 text-red-700 dark:text-red-400'
+          }`}>
             <div className="flex items-center gap-3">
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-              <span className="font-medium">{error}</span>
+              {connectionStatus === 'disconnected' && (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              )}
+              {connectionStatus === 'reconnecting' && (
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              )}
+              <span className="font-medium">
+                {connectionStatus === 'disconnected' && '连接已断开，正在尝试重连...'}
+                {connectionStatus === 'reconnecting' && '正在重新连接...'}
+                {connectionStatus === 'connected' && error}
+              </span>
             </div>
           </div>
         )}
@@ -296,6 +507,7 @@ export default function Home() {
               <RoomList
                 rooms={rooms}
                 onJoinRoom={handleJoinRoom}
+                onJoinAsSpectator={handleJoinAsSpectator}
                 onRefresh={handleRefreshRooms}
                 playerName={playerName}
               />
@@ -311,7 +523,11 @@ export default function Home() {
                   房间 {roomId}
                 </h1>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  玩家: <span className="font-medium">{playerName}</span> · {playerColor === 'black' ? '黑方' : '白方'}
+                  {isSpectator ? (
+                    <>观战者: <span className="font-medium">{playerName}</span></>
+                  ) : (
+                    <>玩家: <span className="font-medium">{playerName}</span> · {playerColor === 'black' ? '黑方' : '白方'}</>
+                  )}
                 </p>
               </div>
               <button
@@ -323,7 +539,7 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col xl:flex-row gap-12 items-center xl:items-start justify-center">
-              <div className="w-full xl:w-80 flex-shrink-0 order-2 xl:order-1">
+              <div className="w-full xl:w-80 flex-shrink-0 order-2 xl:order-1 space-y-4">
                 <GameInfo
                   currentPlayer={currentPlayer}
                   status={status}
@@ -337,8 +553,10 @@ export default function Home() {
                   lastLoser={lastLoser}
                   onChooseColor={handleChooseColor}
                   waitingForColorChoice={waitingForColorChoice}
+                  spectators={spectators}
+                  isSpectator={isSpectator}
                 />
-                <div className="mt-4">
+                <div>
                   <button
                     onClick={handleGetRecords}
                     className="w-full bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-200"
@@ -346,12 +564,18 @@ export default function Home() {
                     查看对局记录
                   </button>
                 </div>
+                <ChatBox
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                  disabled={!roomId}
+                  playerName={playerName}
+                />
               </div>
               <div className="flex-1 flex justify-center items-center order-1 xl:order-2 min-w-0">
                 <GameBoard
                   board={board}
                   onCellClick={handleCellClick}
-                  disabled={status !== 'playing' || currentPlayer !== playerColor}
+                  disabled={status !== 'playing' || currentPlayer !== playerColor || isSpectator}
                   lastMove={lastMove}
                   winner={winner}
                   status={status}
