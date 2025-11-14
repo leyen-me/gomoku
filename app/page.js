@@ -176,69 +176,84 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 py-4 sm:py-8 px-2 sm:px-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-white dark:bg-gray-950 py-12 sm:py-16 px-4 sm:px-6">
+      <div className="max-w-7xl mx-auto">
         {error && (
-          <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
-            <span className="block sm:inline">{error}</span>
+          <div className="mb-8 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 text-red-700 dark:text-red-400 px-6 py-4 rounded-lg animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              <span className="font-medium">{error}</span>
+            </div>
           </div>
         )}
 
         {gameState === 'lobby' && (
-          <div className="space-y-6">
-            <div className="text-center mb-8">
-              <h1 className="text-4xl font-bold text-gray-800 dark:text-white mb-2">
-                五子棋游戏
+          <div className="space-y-16 animate-in fade-in duration-200">
+            <div className="text-center">
+              <h1 className="text-4xl sm:text-5xl font-semibold mb-3 text-gray-900 dark:text-white">
+                五子棋
               </h1>
-              <p className="text-gray-600 dark:text-gray-400">
-                创建或加入房间开始游戏
+              <p className="text-base text-gray-600 dark:text-gray-400">
+                经典策略 · 在线对战
               </p>
             </div>
-            <CreateRoom
-              onCreateRoom={handleCreateRoom}
-              onJoinRoom={handleJoinRoom}
-            />
-            <RoomList
-              rooms={rooms}
-              onJoinRoom={handleJoinRoom}
-              onRefresh={handleRefreshRooms}
-            />
+            <div className="flex flex-col gap-8 items-center w-full max-w-md mx-auto">
+              <CreateRoom
+                onCreateRoom={handleCreateRoom}
+                onJoinRoom={handleJoinRoom}
+              />
+              <RoomList
+                rooms={rooms}
+                onJoinRoom={handleJoinRoom}
+                onRefresh={handleRefreshRooms}
+                playerName={playerName}
+              />
+            </div>
           </div>
         )}
 
         {(gameState === 'waiting' || gameState === 'playing' || gameState === 'finished') && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+          <div className="space-y-12 animate-in fade-in duration-200">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm p-6">
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-white">
+                <h1 className="text-xl sm:text-2xl font-semibold mb-1 text-gray-900 dark:text-white">
                   房间 {roomId}
                 </h1>
-                <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
-                  玩家: {playerName} ({playerColor === 'black' ? '黑方' : '白方'})
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  玩家: <span className="font-medium">{playerName}</span> · {playerColor === 'black' ? '黑方' : '白方'}
                 </p>
               </div>
               <button
                 onClick={handleLeaveRoom}
-                className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors w-full sm:w-auto"
+                className="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-5 rounded-lg transition-colors duration-200 w-full sm:w-auto"
               >
                 离开房间
               </button>
             </div>
 
-            <GameInfo
-              currentPlayer={currentPlayer}
-              status={status}
-              winner={winner}
-              players={players}
-              onRestart={handleRestart}
-            />
-
-            <GameBoard
-              board={board}
-              onCellClick={handleCellClick}
-              disabled={status !== 'playing' || currentPlayer !== playerColor}
-              lastMove={lastMove}
-            />
+            <div className="flex flex-col xl:flex-row gap-12 items-center xl:items-start justify-center">
+              <div className="w-full xl:w-80 flex-shrink-0 order-2 xl:order-1">
+                <GameInfo
+                  currentPlayer={currentPlayer}
+                  status={status}
+                  winner={winner}
+                  players={players}
+                  onRestart={handleRestart}
+                />
+              </div>
+              <div className="flex-1 flex justify-center items-center order-1 xl:order-2 min-w-0">
+                <GameBoard
+                  board={board}
+                  onCellClick={handleCellClick}
+                  disabled={status !== 'playing' || currentPlayer !== playerColor}
+                  lastMove={lastMove}
+                  winner={winner}
+                  status={status}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>
