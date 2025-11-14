@@ -22,6 +22,11 @@ export default function Home() {
   const [lastMove, setLastMove] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [error, setError] = useState(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [lastLoser, setLastLoser] = useState(null);
+  const [waitingForColorChoice, setWaitingForColorChoice] = useState(false);
+  const [gameRecords, setGameRecords] = useState([]);
+  const [showRecords, setShowRecords] = useState(false);
 
   useEffect(() => {
     const socketInstance = getSocket();
@@ -35,6 +40,9 @@ export default function Home() {
       setBoard(room.board);
       setCurrentPlayer(room.currentPlayer);
       setStatus(room.status);
+      setCanUndo(false);
+      setLastLoser(null);
+      setWaitingForColorChoice(false);
       setGameState(room.status === 'waiting' ? 'waiting' : 'playing');
     });
 
@@ -47,6 +55,9 @@ export default function Home() {
       setBoard(room.board);
       setCurrentPlayer(room.currentPlayer);
       setStatus(room.status);
+      setCanUndo(false);
+      setLastLoser(null);
+      setWaitingForColorChoice(false);
       setGameState('playing');
     });
 
@@ -56,6 +67,7 @@ export default function Home() {
       setBoard(room.board);
       setCurrentPlayer(room.currentPlayer);
       setStatus(room.status);
+      setCanUndo(false);
       setGameState((prevState) => {
         if (room.status === 'playing' && prevState === 'waiting') {
           return 'playing';
@@ -70,10 +82,46 @@ export default function Home() {
       setLastMove(data.lastMove);
       setCurrentPlayer(data.currentPlayer);
       setStatus(data.status);
+      setCanUndo(data.canUndo || false);
       if (data.status === 'finished') {
         setWinner(data.winner);
+        setLastLoser(data.lastLoser || null);
+        setWaitingForColorChoice(data.lastLoser ? true : false);
         setGameState('finished');
       }
+    });
+
+    // 监听悔棋
+    socketInstance.on('moveUndone', (data) => {
+      setBoard(data.board);
+      setLastMove(data.lastMove);
+      setCurrentPlayer(data.currentPlayer);
+      setCanUndo(data.canUndo || false);
+    });
+
+    // 监听投降
+    socketInstance.on('gameSurrendered', (data) => {
+      setStatus(data.status);
+      setWinner(data.winner);
+      setGameState('finished');
+      setLastLoser(data.lastLoser);
+      setWaitingForColorChoice(true);
+    });
+
+    // 监听颜色选择
+    socketInstance.on('colorChosen', (data) => {
+      setPlayers(data.players);
+      const myPlayer = data.players.find(p => p.id === socketInstance.id);
+      if (myPlayer) {
+        setPlayerColor(myPlayer.color);
+      }
+      // 颜色已选择，清除等待状态
+      setWaitingForColorChoice(false);
+    });
+
+    // 监听对局记录
+    socketInstance.on('gameRecords', (records) => {
+      setGameRecords(records);
     });
 
     // 监听游戏重新开始
@@ -83,7 +131,15 @@ export default function Home() {
       setStatus(room.status);
       setLastMove(null);
       setWinner(null);
+      setCanUndo(false);
+      setLastLoser(null);
+      setWaitingForColorChoice(false);
       setGameState('playing');
+      const myPlayer = room.players.find(p => p.id === socketInstance.id);
+      if (myPlayer) {
+        setPlayerColor(myPlayer.color);
+      }
+      setPlayers(room.players);
     });
 
     // 监听玩家离开
@@ -112,6 +168,10 @@ export default function Home() {
       socketInstance.off('roomJoined');
       socketInstance.off('roomUpdated');
       socketInstance.off('moveMade');
+      socketInstance.off('moveUndone');
+      socketInstance.off('gameSurrendered');
+      socketInstance.off('colorChosen');
+      socketInstance.off('gameRecords');
       socketInstance.off('gameRestarted');
       socketInstance.off('playerLeft');
       socketInstance.off('roomsList');
@@ -149,9 +209,35 @@ export default function Home() {
     });
   };
 
+  const handleSurrender = () => {
+    if (!socket || !roomId || status !== 'playing') return;
+    if (confirm('确定要投降吗？')) {
+      socket.emit('surrender', { roomId });
+    }
+  };
+
+  const handleUndo = () => {
+    if (!socket || !roomId || status !== 'playing') return;
+    socket.emit('undoMove', { roomId });
+  };
+
+  const handleChooseColor = (color) => {
+    if (!socket || !roomId) return;
+    socket.emit('chooseColor', { roomId, color });
+    // 选择颜色后，可以选择立即重新开始游戏
+    // 或者等待玩家手动点击重新开始
+  };
+
   const handleRestart = () => {
     if (!socket || !roomId) return;
     socket.emit('restartGame', { roomId });
+  };
+
+  const handleGetRecords = () => {
+    if (socket) {
+      socket.emit('getGameRecords');
+      setShowRecords(true);
+    }
   };
 
   const handleLeaveRoom = () => {
@@ -166,6 +252,9 @@ export default function Home() {
     setWinner(null);
     setCurrentPlayer('black');
     setStatus('waiting');
+    setCanUndo(false);
+    setLastLoser(null);
+    setWaitingForColorChoice(false);
     socket.emit('getRooms');
   };
 
@@ -241,7 +330,22 @@ export default function Home() {
                   winner={winner}
                   players={players}
                   onRestart={handleRestart}
+                  onSurrender={handleSurrender}
+                  onUndo={handleUndo}
+                  canUndo={canUndo}
+                  playerColor={playerColor}
+                  lastLoser={lastLoser}
+                  onChooseColor={handleChooseColor}
+                  waitingForColorChoice={waitingForColorChoice}
                 />
+                <div className="mt-4">
+                  <button
+                    onClick={handleGetRecords}
+                    className="w-full bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-200"
+                  >
+                    查看对局记录
+                  </button>
+                </div>
               </div>
               <div className="flex-1 flex justify-center items-center order-1 xl:order-2 min-w-0">
                 <GameBoard
@@ -252,6 +356,89 @@ export default function Home() {
                   winner={winner}
                   status={status}
                 />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showRecords && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center p-6 border-b border-gray-200 dark:border-gray-800">
+                <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                  对局记录
+                </h2>
+                <button
+                  onClick={() => setShowRecords(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="overflow-y-auto p-6 flex-1">
+                {gameRecords.length === 0 ? (
+                  <p className="text-center text-gray-500 dark:text-gray-400 py-8">
+                    暂无对局记录
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {gameRecords.map((record) => (
+                      <div
+                        key={record.id}
+                        className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <p className="font-medium text-gray-900 dark:text-white">
+                              {record.players[0]?.name || '玩家1'} ({record.players[0]?.color === 'black' ? '黑' : '白'}) 
+                              VS 
+                              {record.players[1]?.name || '玩家2'} ({record.players[1]?.color === 'black' ? '黑' : '白'})
+                            </p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                              {new Date(record.startTime).toLocaleString('zh-CN')}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            {record.surrendered ? (
+                              <span className="inline-block px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded text-sm">
+                                投降
+                              </span>
+                            ) : record.winner === 'draw' ? (
+                              <span className="inline-block px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded text-sm">
+                                平局
+                              </span>
+                            ) : (
+                              <span className="inline-block px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded text-sm">
+                                {record.winner === 'black' ? '黑方' : '白方'} 胜
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                          <p>共 {record.moves.length} 步</p>
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-blue-600 dark:text-blue-400 hover:underline">
+                              查看棋谱
+                            </summary>
+                            <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-800 rounded text-xs font-mono">
+                              {record.moves.length > 0 ? (
+                                record.moves.map((move, idx) => (
+                                  <span key={idx} className="inline-block mr-2">
+                                    {move.moveNumber}.{move.player === 'black' ? '黑' : '白'}({move.row},{move.col})
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-gray-500">无棋谱记录</span>
+                              )}
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

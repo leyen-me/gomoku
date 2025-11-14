@@ -1,6 +1,19 @@
 'use client';
 
-export default function GameInfo({ currentPlayer, status, winner, players, onRestart }) {
+export default function GameInfo({ 
+  currentPlayer, 
+  status, 
+  winner, 
+  players, 
+  onRestart, 
+  onSurrender, 
+  onUndo, 
+  canUndo,
+  playerColor,
+  lastLoser,
+  onChooseColor,
+  waitingForColorChoice,
+}) {
   const getPlayerName = (color) => {
     const player = players?.find(p => p.color === color);
     return player?.name || (color === 'black' ? '黑方' : '白方');
@@ -66,8 +79,51 @@ export default function GameInfo({ currentPlayer, status, winner, players, onRes
           </div>
         </div>
 
+        {status === 'playing' && (
+          <div className="pt-4 space-y-3">
+            {canUndo && (
+              <button
+                onClick={onUndo}
+                className="w-full bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-200"
+              >
+                悔棋
+              </button>
+            )}
+            <button
+              onClick={onSurrender}
+              className="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-200"
+            >
+              投降
+            </button>
+          </div>
+        )}
+
         {status === 'finished' && (
-          <div className="pt-4">
+          <div className="pt-4 space-y-3">
+            {waitingForColorChoice && lastLoser === playerColor && (
+              <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <p className="text-sm text-blue-700 dark:text-blue-300 mb-3 text-center font-medium">
+                  作为上一局的输家，你可以优先选择颜色
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => onChooseColor('black')}
+                    className="flex-1 bg-gray-900 hover:bg-gray-800 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200"
+                  >
+                    黑方
+                  </button>
+                  <button
+                    onClick={() => onChooseColor('white')}
+                    className="flex-1 bg-white border-2 border-gray-300 hover:bg-gray-50 text-gray-900 font-medium py-2 px-4 rounded-lg transition-colors duration-200"
+                  >
+                    白方
+                  </button>
+                </div>
+                <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 text-center">
+                  选择颜色后，点击下方"重新开始"按钮开始新一局
+                </p>
+              </div>
+            )}
             <button
               onClick={onRestart}
               className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200"
